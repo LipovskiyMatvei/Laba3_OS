@@ -3,67 +3,68 @@
 #include <windows.h>
 #include <cstdlib>
 
+// --- ДОБАВКА СТАНДАРТА C++ ---
+#include <thread> // Для this_thread
+#include <chrono> // Для chrono::milliseconds
+// -----------------------------
+
 using namespace std;
 
 struct ThreadData {
-    int thread_id;           
-    int* arr;                
-    int arr_size;            
+    int thread_id;
+    int* arr;
+    int arr_size;
 
-    
-    HANDLE start_event;            
-    HANDLE cannot_continue_event;  
-    HANDLE continue_event;         
-    HANDLE stop_event;             
+    HANDLE start_event;
+    HANDLE cannot_continue_event;
+    HANDLE continue_event;
+    HANDLE stop_event;
 
-    CRITICAL_SECTION* cs;    
+    CRITICAL_SECTION* cs; // Оставляем "родную" критическую секцию
 
-    int marked_count;        
-    bool finish_thread;      
+    int marked_count;
+    bool finish_thread;
 };
 
-/
 DWORD WINAPI marker_thread(LPVOID strct) {
     ThreadData* data = (ThreadData*)strct;
 
-   
     WaitForSingleObject(data->start_event, INFINITE);
 
-    
     srand(data->thread_id);
 
     while (true) {
-        
         int random = rand();
         int index = random % data->arr_size;
 
-        
         EnterCriticalSection(data->cs);
 
-        
         if (data->arr[index] == 0) {
-            Sleep(5);
-            data->arr[index] = data->thread_id; 
+            // --- ЗАМЕНА Sleep() НА СТАНДАРТ C++ ---
+            // Было: Sleep(5);
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            // --------------------------------------
+
+            data->arr[index] = data->thread_id;
             data->marked_count++;
-            Sleep(5);
+
+            // --- ЗАМЕНА Sleep() НА СТАНДАРТ C++ ---
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            // --------------------------------------
+
             LeaveCriticalSection(data->cs);
         }
-       
         else {
             cout << "Thread " << data->thread_id << " cannot mark element " << index
                 << ". Marked: " << data->marked_count << " elements." << endl;
-            LeaveCriticalSection(data->cs); 
+            LeaveCriticalSection(data->cs);
 
-           
             SetEvent(data->cannot_continue_event);
 
-            
             HANDLE events[2] = { data->continue_event, data->stop_event };
             DWORD wait_result = WaitForMultipleObjects(2, events, FALSE, INFINITE);
 
-          
             if (wait_result == WAIT_OBJECT_0 + 1) {
-               
                 EnterCriticalSection(data->cs);
                 for (int i = 0; i < data->arr_size; i++) {
                     if (data->arr[i] == data->thread_id) {
@@ -71,9 +72,8 @@ DWORD WINAPI marker_thread(LPVOID strct) {
                     }
                 }
                 LeaveCriticalSection(data->cs);
-                break; 
+                break;
             }
-            
         }
     }
 
@@ -81,7 +81,6 @@ DWORD WINAPI marker_thread(LPVOID strct) {
 }
 
 int main() {
-    
     int n;
     cout << "Enter array size: ";
     cin >> n;
@@ -90,19 +89,15 @@ int main() {
     cout << "Enter number of marker threads: ";
     cin >> thread_count;
 
-    
     int* arr = new int[n]();
 
-    
     CRITICAL_SECTION cs;
     InitializeCriticalSection(&cs);
 
-   
     vector<ThreadData> threads_data(thread_count);
     vector<HANDLE> thread_handles(thread_count);
     vector<HANDLE> cannot_continue_events(thread_count);
 
-    
     for (int i = 0; i < thread_count; i++) {
         threads_data[i].thread_id = i + 1;
         threads_data[i].arr = arr;
@@ -111,7 +106,6 @@ int main() {
         threads_data[i].marked_count = 0;
         threads_data[i].finish_thread = false;
 
-        // Создаем события (Auto-reset для cannot_continue и continue, manual для start может быть)
         threads_data[i].start_event = CreateEvent(NULL, TRUE, FALSE, NULL);
         threads_data[i].cannot_continue_event = CreateEvent(NULL, FALSE, FALSE, NULL);
         threads_data[i].continue_event = CreateEvent(NULL, FALSE, FALSE, NULL);
@@ -122,7 +116,6 @@ int main() {
         thread_handles[i] = CreateThread(NULL, 0, marker_thread, &threads_data[i], 0, NULL);
     }
 
-   
     for (int i = 0; i < thread_count; i++) {
         SetEvent(threads_data[i].start_event);
     }
@@ -130,7 +123,6 @@ int main() {
     vector<bool> active_threads(thread_count, true);
     int active_count = thread_count;
 
-  
     while (active_count > 0) {
 
         vector<HANDLE> current_wait_handles;
@@ -140,42 +132,33 @@ int main() {
             }
         }
 
-        
         WaitForMultipleObjects(current_wait_handles.size(), current_wait_handles.data(), TRUE, INFINITE);
 
-        
         cout << "Array contents: ";
         for (int i = 0; i < n; i++) {
             cout << arr[i] << " ";
         }
         cout << endl;
 
-        
         int thread_to_terminate;
         cout << "Enter thread ID to terminate: ";
         cin >> thread_to_terminate;
 
         int thread_index = thread_to_terminate - 1;
 
-       
         if (thread_index >= 0 && thread_index < thread_count && active_threads[thread_index]) {
-            
             SetEvent(threads_data[thread_index].stop_event);
-
-            
             WaitForSingleObject(thread_handles[thread_index], INFINITE);
 
             active_threads[thread_index] = false;
             active_count--;
 
-         
             cout << "Array contents after termination: ";
             for (int i = 0; i < n; i++) {
                 cout << arr[i] << " ";
             }
             cout << endl;
 
-           
             for (int i = 0; i < thread_count; i++) {
                 if (active_threads[i]) {
                     SetEvent(threads_data[i].continue_event);
@@ -184,7 +167,6 @@ int main() {
         }
         else {
             cout << "Invalid thread ID!" << endl;
-            
             for (int i = 0; i < thread_count; i++) {
                 if (active_threads[i]) {
                     SetEvent(threads_data[i].continue_event);
@@ -193,7 +175,6 @@ int main() {
         }
     }
 
- 
     for (int i = 0; i < thread_count; i++) {
         CloseHandle(threads_data[i].start_event);
         CloseHandle(threads_data[i].cannot_continue_event);
